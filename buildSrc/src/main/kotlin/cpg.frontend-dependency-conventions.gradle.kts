@@ -9,7 +9,6 @@ val enableGoFrontend: Boolean by rootProject.extra
 val enablePythonFrontend: Boolean by rootProject.extra
 val enableLLVMFrontend: Boolean by rootProject.extra
 val enableTypeScriptFrontend: Boolean by rootProject.extra
-val enableSvelteFrontend: Boolean by rootProject.extra
 val enableRubyFrontend: Boolean by rootProject.extra
 val enableJVMFrontend: Boolean by rootProject.extra
 val enableINIFrontend: Boolean by rootProject.extra
@@ -35,10 +34,7 @@ dependencies {
     }
     if (enableTypeScriptFrontend) {
         implementation(project(":cpg-language-typescript"))
-    }
-    if (enableSvelteFrontend) {
-        implementation(project(":cpg-language-svelte"))
-    }    
+    }   
     if (enableRubyFrontend) {
         implementation(project(":cpg-language-ruby"))
     }
