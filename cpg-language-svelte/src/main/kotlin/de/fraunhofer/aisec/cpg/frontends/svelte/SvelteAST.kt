@@ -128,10 +128,39 @@ data class Comment(
 
 // --- Placeholder for more complex types needed later --- 
 
-/** Placeholder for different types of expressions within tags or scripts */
+/** Base for different types of expressions within tags or scripts */
 @JsonIgnoreProperties(ignoreUnknown = true)
-// Add specific expression types later, e.g., Identifier, Literal, BinaryExpression
+@JsonTypeInfo( // Add type info for expression polymorphism
+    use = JsonTypeInfo.Id.NAME,
+    include = JsonTypeInfo.As.PROPERTY,
+    property = "type",
+    visible = true
+)
+@JsonSubTypes(
+    JsonSubTypes.Type(value = Identifier::class, name = "Identifier"),
+    JsonSubTypes.Type(value = Literal::class, name = "Literal")
+    // Add other expression types like BinaryExpression, CallExpression etc. as needed
+)
 interface ExpressionNode : SvelteNode
+
+/** Represents an identifier (variable name) */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class Identifier(
+    override val type: String = "Identifier",
+    override val start: Int,
+    override val end: Int,
+    val name: String
+) : ExpressionNode
+
+/** Represents a literal value (string, number, boolean, null) */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class Literal(
+    override val type: String = "Literal",
+    override val start: Int,
+    override val end: Int,
+    val value: Any?, // Can be string, number, boolean, null
+    val raw: String // Raw string representation
+) : ExpressionNode
 
 /** Represents an HTML element or Svelte Component in the template */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -172,13 +201,12 @@ data class Attribute(
     JsonSubTypes.Type(value = Text::class, name = "Text"),
     JsonSubTypes.Type(value = ExpressionTag::class, name = "ExpressionTag"),
     JsonSubTypes.Type(value = Comment::class, name = "Comment"),
-    // Add Element type
     JsonSubTypes.Type(value = Element::class, name = "Element"),
-    // JsonSubTypes.Type(value = Element::class, name = "Component"), // Add alias if type name varies
-    // JsonSubTypes.Type(value = Element::class, name = "SvelteElement"), // Add alias if type name varies
     JsonSubTypes.Type(value = Fragment::class, name = "Fragment"),
-    // Add Attribute (might not be needed directly in Fragment's children list, but good to have)
-    JsonSubTypes.Type(value = Attribute::class, name = "Attribute")
+    JsonSubTypes.Type(value = Attribute::class, name = "Attribute"),
+    // Add Expression subtypes IF they can appear directly as children (unlikely but possible)
+    JsonSubTypes.Type(value = Identifier::class, name = "Identifier"), 
+    JsonSubTypes.Type(value = Literal::class, name = "Literal")
     // Add Block subtypes, etc.
 )
 interface SvelteNodeMixin // Mixin interface for Jackson annotations
