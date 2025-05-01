@@ -24,11 +24,14 @@
  *
  */
 
+import com.github.gradle.node.npm.task.NpmInstallTask
+import com.github.gradle.node.npm.task.NpmTask
 import io.github.masch0212.deno.RunDenoTask
 
 plugins {
     id("cpg.frontend-conventions")
     alias(libs.plugins.deno)
+    id("com.github.node-gradle.node") version "7.0.1"
 }
 
 mavenPublishing {
@@ -37,6 +40,38 @@ mavenPublishing {
         description.set("A JavaScript/TypeScript language frontend for the CPG")
     }
 }
+
+// --- Node.js Integration for Svelte Parser ---
+val svelteParserDir = file("src/main/svelte-parser")
+
+node {
+    version.set("18.17.1")
+    npmVersion.set("9.6.7")
+    download.set(true)
+    workDir.set(file("${layout.buildDirectory}/nodejs-svelte"))
+    npmWorkDir.set(file("${layout.buildDirectory}/npm-svelte"))
+}
+
+val npmInstallSvelteParser =
+    tasks.register<NpmInstallTask>("npmInstallSvelteParser") {
+        description = "Installs npm dependencies for the Svelte parser."
+        dependsOn(tasks.nodeSetup)
+        workingDir.set(svelteParserDir)
+        inputs.file(svelteParserDir.resolve("package.json"))
+        inputs.file(svelteParserDir.resolve("package-lock.json")).optional(true)
+        outputs.dir(svelteParserDir.resolve("node_modules"))
+    }
+
+val compileSvelteParser =
+    tasks.register<NpmTask>("compileSvelteParser") {
+        description = "Compiles the Svelte parser TypeScript to JavaScript using tsc."
+        dependsOn(npmInstallSvelteParser)
+        workingDir.set(svelteParserDir)
+        args.set(listOf("run", "build"))
+        inputs.file(svelteParserDir.resolve("tsconfig.json"))
+        inputs.dir(svelteParserDir.resolve("src"))
+        outputs.dir(svelteParserDir.resolve("dist"))
+    }
 
 val compileWindowsX8664 =
     tasks.register<RunDenoTask>("compileWindowsX8664") {
@@ -130,5 +165,20 @@ tasks.processResources {
         compileMacOSAarch64,
         compileLinuxX8664,
         compileLinuxAarch64,
+        compileSvelteParser,
     )
+
+    from(compileSvelteParser.map { it.outputs.files }) {
+        into("svelte")
+        include("parser.js")
+    }
+}
+
+tasks.compileKotlin { dependsOn(tasks.processResources) }
+
+tasks.clean {
+    delete(node.workDir)
+    delete(node.npmWorkDir)
+    delete(svelteParserDir.resolve("node_modules"))
+    delete(svelteParserDir.resolve("dist"))
 }
