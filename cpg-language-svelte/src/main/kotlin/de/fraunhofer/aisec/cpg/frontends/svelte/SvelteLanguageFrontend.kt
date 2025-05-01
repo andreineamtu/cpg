@@ -24,7 +24,7 @@ class SvelteLanguageFrontend(
     scopeManager: ScopeManager = ScopeManager(),
 ) : LanguageFrontend(language, config, scopeManager) {
 
-    private val parserScriptResourcePath = "/parser.js" // Path within resources
+    private val parserScriptResourcePath = "/svelte/parser.js" // Adjusted path within resources
     private val nodeExecutable = "node" // Assumes node is in PATH
     // Configure ObjectMapper for polymorphism and to ignore unknown properties
     private val mapper: ObjectMapper = jacksonObjectMapper()
@@ -249,41 +249,47 @@ class SvelteLanguageFrontend(
         if(parent is Declaration) parent.addComment(commentText)
     }
 
-    /** Handles Element nodes - currently creates a comment and processes children/attributes */
+    /** Handles Element nodes - Creates a VariableDeclaration placeholder and processes children/attributes */
     private fun handleElement(ast: Element, parent: Node) {
         log.debug("Handling Element node: <{}>", ast.name)
         val elementLocation = getLocationFromRawNode(ast)
+        val elementCode = getCodeFromRawNode(ast)
 
-        // TODO: Create a meaningful CPG representation for HTML elements.
-        // This could be a specific node type (e.g., HTMLElementDeclaration)
-        // or potentially represented via calls (e.g., document.createElement)
-        // or annotations/comments depending on the analysis goal.
-        // For now, just add a comment to the parent.
+        // --- CPG Node Creation --- 
+        // Option 1: Represent element as a variable declaration (placeholder)
+        // We might need a custom type like "HTMLElement" or use unknownType()
+        val elementVar = newVariableDeclaration(ast.name, unknownType(), false, elementCode)
+        elementVar.location = elementLocation
+        elementVar.isImplicit = true // Mark as implicit as it represents template structure
+        // Add variable to the current scope (e.g., the component record or parent element scope)
+        scopeManager.addDeclaration(elementVar)
+
+        // Set this as the new parent scope for attributes and children
+        val parentScopeNode = elementVar 
+
+        // --- Original Placeholder Logic (Commented out) --- 
+        /*
         val commentText = "Template Element: <${ast.name}>"
         if(parent is Declaration) parent.addComment(commentText)
 
-        // Create a placeholder node to act as the scope/parent for children and attributes
-        // This is temporary until a proper CPG node is chosen.
         val elementPlaceholderNode = newCompoundStatement(getCodeFromRawNode(ast))
         elementPlaceholderNode.location = elementLocation
-        // Add placeholder to parent if possible (e.g., if parent is a CompoundStatement)
-        // if (parent is CompoundStatement) parent.addStatement(elementPlaceholderNode)
-        // Otherwise, maybe add to the closest method/record scope? Needs thought.
-        scopeManager.addStatement(elementPlaceholderNode) // Add to current scope for now
+        scopeManager.addStatement(elementPlaceholderNode) 
+        */
 
-        // Process attributes
-        scopeManager.enterScope(elementPlaceholderNode) // Enter scope for attributes/children
+        // Process attributes, associating them with the elementVar
+        scopeManager.enterScope(parentScopeNode) // Enter scope associated with the element
         for(attribute in ast.attributes) {
-            handleAttribute(attribute, elementPlaceholderNode)
+            handleAttribute(attribute, parentScopeNode) // Pass elementVar as parent
         }
 
-        // Process child nodes recursively (similar to handleFragment)
+        // Process child nodes recursively
         for(childNode in ast.children) {
              when(childNode) {
-                 is Text -> handleText(childNode, elementPlaceholderNode)
-                 is ExpressionTag -> handleExpressionTag(childNode, elementPlaceholderNode)
-                 is Comment -> handleComment(childNode, elementPlaceholderNode)
-                 is Element -> handleElement(childNode, elementPlaceholderNode) // Handle nested elements
+                 is Text -> handleText(childNode, parentScopeNode)
+                 is ExpressionTag -> handleExpressionTag(childNode, parentScopeNode)
+                 is Comment -> handleComment(childNode, parentScopeNode)
+                 is Element -> handleElement(childNode, parentScopeNode) // Handle nested elements
                  // Add cases for other valid children (Blocks, etc.)
                  else -> {
                      log.warn("Unsupported Svelte AST node type encountered in element <{}>: {}", ast.name, childNode.type)
