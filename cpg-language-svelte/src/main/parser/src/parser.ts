@@ -23,8 +23,7 @@ try {
     });
 
     // Stringify the AST and print to stdout
-    // Using null, 2 for pretty printing, which might be large but good for debugging initially
-    // For production, might remove indentation (null, 0)
+    // Using null, 0 for compact output
     const astJson = JSON.stringify(ast, null, 0);
     process.stdout.write(astJson);
 

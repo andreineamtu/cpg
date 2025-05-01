@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
-    "target": "ES2016",
-    "module": "ESNext",
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "target": "ES2016", 
+    "module": "CommonJS", 
+    "outDir": "../../../../build/parser/src",
+    "rootDir": "./src", 
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -11,8 +11,7 @@
     "moduleResolution": "node"
   },
   "include": [
-    "src/main/nodejs/**/*.ts",
-    "src/**/*.svelte"
+    "src/**/*.ts" 
   ],
   "exclude": [
     "node_modules"
