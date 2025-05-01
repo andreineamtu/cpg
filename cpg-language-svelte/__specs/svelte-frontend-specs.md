@@ -1,7 +1,5 @@
 
-Okay, let's explore how Svelte support could potentially be added to the Fraunhofer CPG project, drawing parallels from the TypeScript/React implementation you linked.
-
-Based on the approach taken in the [TypeScript language frontend PR #462](https://github.com/Fraunhofer-AISEC/cpg/pull/462/commits), adding support for a new language like Svelte to the CPG involves several key steps:
+Adding support for a new language like Svelte to the CPG involves several key steps:
 
 1.  **Create a New Language Module:**
     *   A new Gradle module, likely named `cpg-language-svelte`, would need to be created within the CPG project structure. This module will house all the Svelte-specific parsing and CPG translation logic, similar to `cpg-language-typescript`.
@@ -38,3 +36,26 @@ Based on the approach taken in the [TypeScript language frontend PR #462](https:
 *   **Component Structure:** Handling the multi-part nature of `.svelte` files (script, template, style) within the CPG framework.
 
 Contributing Svelte support would be a significant undertaking, requiring a deep understanding of both Svelte's compilation process and the CPG's architecture, similar to the effort shown in the TypeScript PR.
+
+
+
+**feat: Add Svelte Language Frontend**
+
+**Description:**
+
+This PR introduces experimental support for analyzing Svelte (`.svelte`) files within the Cloud Property Graph (CPG). The goal is to enable security analysis and code understanding for projects built with the Svelte framework, similar to the existing support for other languages like TypeScript/JavaScript.
+
+**Motivation:**
+
+Svelte is a popular and growing component framework. Adding CPG support allows developers and security researchers to leverage CPG's capabilities for Svelte codebases.
+
+**Implementation Approach:**
+
+Inspired by the existing `cpg-language-typescript` frontend (#462), this implementation includes:
+
+1.  **New Module:** A dedicated Gradle module `cpg-language-svelte` has been created to encapsulate the Svelte-specific logic.
+2.  **Parser Integration:** It utilizes the official `svelte/compiler` (specifically `svelte.parse`) invoked via a Node.js script (`parser.js` bundled with Webpack) to generate an Abstract Syntax Tree (AST) from `.svelte` files. This script is called from the Kotlin frontend.
+
+**Acknowledgements:**
+
+*   Thanks to the contributors of the `cpg-language-typescript` frontend, which served as a valuable reference.
