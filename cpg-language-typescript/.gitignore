@@ -1,0 +1,14 @@
+# Node/NPM related
+/src/main/svelte-parser/node_modules/
+/src/main/svelte-parser/dist/
+/nodejs-svelte/
+/npm-svelte/
+
+# Gradle build output (often covered by root gitignore, but can be explicit)
+/property 'buildDir'/
+dist
+/build/
+/.gradle/
+
+# Deno specific (if needed)
+# .deno_cache/
