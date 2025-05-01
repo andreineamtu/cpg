@@ -30,7 +30,6 @@ import de.fraunhofer.aisec.cpg.TranslationContext
 import de.fraunhofer.aisec.cpg.frontends.FrontendUtils
 import de.fraunhofer.aisec.cpg.frontends.Language
 import de.fraunhofer.aisec.cpg.frontends.LanguageFrontend
-import de.fraunhofer.aisec.cpg.frontends.TranslationException
 import de.fraunhofer.aisec.cpg.graph.*
 import de.fraunhofer.aisec.cpg.graph.Annotation
 import de.fraunhofer.aisec.cpg.graph.declarations.TranslationUnitDeclaration
@@ -38,9 +37,10 @@ import de.fraunhofer.aisec.cpg.graph.statements.expressions.CallExpression
 import de.fraunhofer.aisec.cpg.graph.types.Type
 import de.fraunhofer.aisec.cpg.sarif.PhysicalLocation
 import de.fraunhofer.aisec.cpg.sarif.Region
+import de.fraunhofer.aisec.cpg.sarif.translation.toUri
 import java.io.File
 import java.io.File.createTempFile
-import java.io.FileReader
+import java.io.FileNotFoundException
 import java.io.LineNumberReader
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -58,7 +58,7 @@ import java.nio.file.StandardCopyOption
  */
 class TypeScriptLanguageFrontend(
     ctx: TranslationContext,
-    language: Language<TypeScriptLanguageFrontend>,
+    language: Language<out LanguageFrontend<*, *>>,
 ) : LanguageFrontend<TypeScriptNode, TypeScriptNode>(ctx, language) {
 
     val declarationHandler = DeclarationHandler(this)
@@ -71,7 +71,7 @@ class TypeScriptLanguageFrontend(
     private val mapper = jacksonObjectMapper()
 
     companion object {
-        private val parserFile: File = createTempFile("parser", "")
+        private val parserFile: File = createTempFile("parser", "-ts")
 
         init {
             val arch = System.getProperty("os.arch")
@@ -88,27 +88,53 @@ class TypeScriptLanguageFrontend(
                     }
                 }
 
-            val link = this::class.java.getResourceAsStream("/typescript/parser-$os-$arch")
-            link?.use {
-                log.info(
-                    "Extracting parser out of resources to {}",
-                    parserFile.absoluteFile.toPath(),
+            try {
+                val link = this::class.java.getResourceAsStream("/typescript/parser-$os-$arch")
+                link?.use {
+                    log.info(
+                        "Extracting TS parser out of resources to {}",
+                        parserFile.absoluteFile.toPath(),
+                    )
+                    Files.copy(
+                        it,
+                        parserFile.absoluteFile.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                    parserFile.setExecutable(true)
+                }
+                    ?: log.warn(
+                        "TS parser executable not found in resources for $os-$arch. Parsing TS/JS will fail."
+                    )
+            } catch (e: Exception) {
+                log.warn(
+                    "Failed to extract TS parser executable for $os-$arch. Parsing TS/JS will fail.",
+                    e,
                 )
-                Files.copy(
-                    it,
-                    parserFile.absoluteFile.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-                parserFile.setExecutable(true)
             }
         }
     }
 
     override fun parse(file: File): TranslationUnitDeclaration {
-        // Necessary to not read file contents several times
+        if (file.extension == "svelte") {
+            log.info("Detected .svelte file, delegating to SvelteLanguageFrontend: {}", file.name)
+            val svelteLanguage = SvelteLanguage()
+            val svelteFrontend = SvelteLanguageFrontend(this.ctx, svelteLanguage)
+            return svelteFrontend.parse(file)
+        }
+
+        log.debug("Parsing TS/JS file with Deno parser: {}", file.name)
         currentFileContent = file.readText()
+
         if (!parserFile.exists()) {
-            throw TranslationException("parser not found @ ${parserFile.absolutePath}")
+            val errorMsg =
+                "TypeScript parser executable not found or failed to extract @ ${parserFile.absolutePath}. Cannot parse TS/JS files."
+            log.error(errorMsg)
+            val tud = newTranslationUnitDeclaration(file.name, file.readText())
+            tud.language = this.language
+            val problem = newProblemDeclaration(errorMsg, ProblemNode.ProblemType.PARSER)
+            problem.location = file.toUri()?.let { PhysicalLocation(it, Region()) }
+            tud.addDeclaration(problem)
+            return tud
         }
 
         val p = Runtime.getRuntime().exec(arrayOf(parserFile.absolutePath, file.absolutePath))
@@ -118,6 +144,8 @@ class TypeScriptLanguageFrontend(
         val translationUnit = this.declarationHandler.handle(node) as TranslationUnitDeclaration
 
         handleComments(file, translationUnit)
+
+        currentFileContent = null
 
         return translationUnit
     }
@@ -134,10 +162,6 @@ class TypeScriptLanguageFrontend(
      * @param translationUnit the ast root node which children get the comments associated to
      */
     fun handleComments(file: File, translationUnit: TranslationUnitDeclaration) {
-        // Extracting comments with regex, not ideal, as you need a context sensitive parser. but
-        // the parser does not support comments so we
-        // use a regex as best effort approach. We may recognize something as a comment, which is
-        // acceptable.
         val matches: Sequence<MatchResult>? =
             currentFileContent?.let {
                 Regex("(?:/\\*((?:[^*]|(?:\\*+[^*/]))*)\\*+/)|(?://(.*))").findAll(it)
@@ -147,9 +171,6 @@ class TypeScriptLanguageFrontend(
             groups[0]?.let {
                 val commentRegion = getRegionFromStartEnd(file, it.range.first, it.range.last)
 
-                // We only want the actual comment text and therefore take the value we captured in
-                // the first, or second group.
-                // Only as a last resort we take the entire match, although this should never occurs
                 var comment = groups[1]?.value ?: (groups[2]?.value ?: it.value)
 
                 comment = comment.trim()
@@ -172,42 +193,45 @@ class TypeScriptLanguageFrontend(
     override fun locationOf(astNode: TypeScriptNode): PhysicalLocation {
         var position = astNode.location.pos
 
-        // Correcting node positions as we have noticed that the parser computes wrong
-        // positions, it is apparent when a file starts with a comment
         astNode.code?.let { code ->
             currentFileContent?.let { position = it.indexOf(code, position) }
         }
 
-        // From here on the invariant 'astNode.location.end - position != astNode.code!!.length'
-        // should hold, only exceptions are mispositioned empty ast elements
         val region =
             getRegionFromStartEnd(File(astNode.location.file), position, astNode.location.end)
         return PhysicalLocation(File(astNode.location.file).toURI(), region ?: Region())
     }
 
     fun getRegionFromStartEnd(file: File, start: Int, end: Int): Region? {
-        val lineNumberReader = LineNumberReader(FileReader(file))
+        val content =
+            this.currentFileContent
+                ?: try {
+                    file.readText()
+                } catch (e: FileNotFoundException) {
+                    log.error("File not found when trying to get region: {}", file.absolutePath)
+                    return null
+                }
 
-        // Start and end position given by the parser are sometimes including spaces in front of the
-        // code and loc.end - loc.pos > code.length. This is caused by the parser and results in
-        // unexpected
-        // but correct regions if the start and end positions are assumed to be correct.
+        val lineNumberReader = LineNumberReader(content.reader())
+
         lineNumberReader.skip(start.toLong())
         val startLine = lineNumberReader.lineNumber + 1
-        lineNumberReader.skip((end - start).toLong())
+        val remainingSkip = (end - start).toLong()
+        if (remainingSkip < 0) {
+            log.warn("Invalid range for region calculation: start={}, end={}", start, end)
+            return null
+        }
+        lineNumberReader.skip(remainingSkip)
         val endLine = lineNumberReader.lineNumber + 1
 
-        val translationUnitSignature = currentFileContent
         val region =
-            translationUnitSignature?.let {
-                FrontendUtils.parseColumnPositionsFromFile(
-                    it,
-                    end - start,
-                    start,
-                    startLine,
-                    endLine,
-                )
-            }
+            FrontendUtils.parseColumnPositionsFromFile(
+                content,
+                end - start,
+                start,
+                startLine,
+                endLine,
+            )
         return region
     }
 
@@ -219,7 +243,6 @@ class TypeScriptLanguageFrontend(
         node.firstChild("Identifier")?.let { this.codeOf(it) } ?: ""
 
     fun processAnnotations(node: Node, astNode: TypeScriptNode) {
-        // filter for decorators
         astNode.children
             ?.filter { it.type == "Decorator" }
             ?.map { handleDecorator(it) }
@@ -227,7 +250,6 @@ class TypeScriptLanguageFrontend(
     }
 
     private fun handleDecorator(node: TypeScriptNode): Annotation {
-        // a decorator can contain a call expression with additional arguments
         val callExpr = node.firstChild("CallExpression")
         return if (callExpr != null) {
             val call = this.expressionHandler.handle(callExpr) as CallExpression
@@ -243,7 +265,6 @@ class TypeScriptLanguageFrontend(
 
             annotation
         } else {
-            // or a decorator just has a simple identifier
             val name = this.getIdentifierName(node)
 
             newAnnotation(name, rawNode = node)

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2018",                 // Target Node.js LTS versions
+    "module": "CommonJS",             // Use CommonJS modules for Node.js
+    "outDir": "../dist",              // Output directory for compiled JS
+    "rootDir": "./src",               // Source directory
+    "strict": true,                   // Enable strict type checking
+    "esModuleInterop": true,          // Allows default imports from CommonJS modules
+    "skipLibCheck": true,             // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node"      // Use Node.js module resolution
+  },
+  "include": [
+    "src/**/*"                      // Include all files in the src directory
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.spec.ts"
+  ]
+} 
