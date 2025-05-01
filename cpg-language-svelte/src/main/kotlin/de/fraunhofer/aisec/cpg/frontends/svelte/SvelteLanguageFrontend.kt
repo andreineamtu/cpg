@@ -233,13 +233,68 @@ class SvelteLanguageFrontend(
         // Alternatively create a Literal<String> if appropriate CPG representation exists
     }
 
-     /** Handles ExpressionTag nodes - currently creates a comment */
+     /** Handles ExpressionTag nodes - attempts to parse inner expression */
     private fun handleExpressionTag(ast: ExpressionTag, parent: Node) {
         log.debug("Handling ExpressionTag node: type {}", ast.expression.type)
-        // TODO: Parse/Handle the inner ast.expression (JS/TS)
-        val commentText = "Template expression needs parsing: type=${ast.expression.type}"
-         if(parent is Declaration) parent.addComment(commentText)
-        // Will need to invoke JS/TS parser on the expression's code snippet
+        val expressionLocation = getLocationFromRawNode(ast.expression)
+        val expressionCode = getCodeFromRawNode(ast.expression)
+
+        // Attempt to handle the inner expression
+        val cpgExpression = handleTemplateExpression(ast.expression)
+
+        // TODO: Connect the resulting cpgExpression to the parent CPG node.
+        // How depends on the parent. If parent is an element's VariableDecl,
+        // maybe this represents content? If it's in an attribute value,
+        // it forms part of the attribute's initializer.
+        // For now, add as a comment to the parent.
+        val commentText = "Template expression parsed as: ${cpgExpression::class.simpleName}"
+        if (parent is Declaration) parent.addComment(commentText)
+        else if (parent is CompoundStatement) { // E.g., the placeholder for Element
+            val commentNode = newComment(commentText)
+            commentNode.location = expressionLocation
+            parent.addStatement(commentNode)
+        }
+         // Add the expression itself to the scope if it's a statement (like ProblemExpression)
+         if (cpgExpression is Statement && parent is CompoundStatement) {
+            parent.addStatement(cpgExpression)
+         } else if (cpgExpression is Statement) {
+            scopeManager.addStatement(cpgExpression)
+         }
+    }
+
+    /** 
+     * Helper to handle different types of expressions found within template tags.
+     * Returns the corresponding CPG Expression node.
+     */
+    private fun handleTemplateExpression(exprAst: ExpressionNode): Expression {
+        val cpgExpression: Expression = when (exprAst) {
+            is Identifier -> {
+                log.debug("Template Expression: Identifier '{}'", exprAst.name)
+                // Create a reference to the variable
+                newReference(exprAst.name, unknownType(), exprAst)
+            }
+            is Literal -> {
+                log.debug("Template Expression: Literal '{}'", exprAst.raw)
+                // Determine type based on value
+                val type = when (exprAst.value) {
+                    is String -> primitiveType("string")
+                    is Number -> primitiveType("number") // Or specific (int, double)
+                    is Boolean -> primitiveType("boolean")
+                    null -> unknownType() // Or a specific NullType
+                    else -> unknownType()
+                }
+                newLiteral(exprAst.value, type, exprAst)
+            }
+            // TODO: Add cases for BinaryExpression, CallExpression, MemberExpression etc.
+            else -> {
+                log.warn("Unsupported expression type in template: {}", exprAst.type)
+                newProblemExpression(
+                    "Unsupported template expression type: ${exprAst.type}",
+                    rawNode = exprAst
+                )
+            }
+        }
+        return cpgExpression
     }
 
      /** Handles Comment nodes - currently creates a comment */
@@ -302,18 +357,66 @@ class SvelteLanguageFrontend(
                  }
              }
          }
-         scopeManager.leaveScope(elementPlaceholderNode)
+         scopeManager.leaveScope(parentScopeNode)
     }
 
-    /** Handles Attribute nodes - currently creates a comment */
+    /** Handles Attribute nodes - Creates a FieldDeclaration placeholder */
     private fun handleAttribute(ast: Attribute, parent: Node) {
         log.debug("Handling Attribute node: {}={...}", ast.name)
         val attributeLocation = getLocationFromRawNode(ast)
         val attributeCode = getCodeFromRawNode(ast)
+        
+        // --- CPG Node Creation --- 
+        // Option 1: Represent attribute as a FieldDeclaration of the parent element node
+        // The type depends on the attribute value (String, Expression, etc.)
+        // For now, use unknownType()
+        val attributeField = newFieldDeclaration(ast.name, unknownType(), listOf(), attributeCode, false, ast)
+        attributeField.location = attributeLocation
+        attributeField.isImplicit = true // Represents template structure
 
-        // TODO: Create CPG representation for attributes/directives.
-        // Simple attributes might be literals or key-value pairs.
-        // Directives (on:click, bind:value) need special handling (CallExpressions, Refs, etc.)
+        // Add the field to the parent scope (which should be the element's scope)
+        scopeManager.addDeclaration(attributeField)
+
+        // Process the value and potentially set it as the FieldDeclaration's initializer
+        // Note: Attribute values can be complex (list of Text/ExpressionTag)
+        // We might need a helper to combine these into a single Expression (e.g., String concat)
+        // For now, let's just process them recursively and maybe add as comments to the field.
+        scopeManager.enterScope(attributeField) // Enter scope for value processing
+        val valueExpressions = mutableListOf<Node>()
+        for(valueNode in ast.value) {
+             when(valueNode) {
+                 is Text -> {
+                    log.debug("Attribute Text value: '{}'", valueNode.raw)
+                    // Create a Literal for the text part
+                    val literal = newLiteral(valueNode.data, primitiveType("string"), valueNode)
+                    valueExpressions.add(literal)
+                 }
+                 is ExpressionTag -> {
+                    log.debug("Attribute ExpressionTag value: type {}", valueNode.expression.type)
+                    // TODO: Properly handle/parse the expression tag here
+                    // For now, create a placeholder expression or comment
+                    val exprPlaceholder = newProblemExpression("Expression value for attribute '${ast.name}' needs parsing", rawNode = valueNode)
+                    exprPlaceholder.location = getLocationFromRawNode(valueNode)
+                    valueExpressions.add(exprPlaceholder)
+                 }
+                 // Handle other potential value types if necessary
+                 else -> {
+                      log.warn("Unsupported Svelte AST node type in attribute '{}' value: {}", ast.name, valueNode.type)
+                 }
+             }
+        }
+        scopeManager.leaveScope(attributeField)
+
+        // TODO: Assign a combined/processed valueExpression list as the initializer
+        // Simple case: if only one literal, assign it.
+        if (valueExpressions.size == 1 && valueExpressions.first() is Expression) {
+            attributeField.initializer = valueExpressions.first() as Expression
+        } else if (valueExpressions.isNotEmpty()) {
+            // More complex: Combine literals? Represent as template literal? Add as comments?
+            attributeField.addComment("Attribute value nodes: ${valueExpressions.map { it::class.simpleName }.joinToString()}")
+        }
+        // --- Original Placeholder Logic (Commented out) ---
+        /*
         val commentText = "Element Attribute: ${attributeCode}"
         if(parent is Declaration) parent.addComment(commentText)
         else if (parent is CompoundStatement) { // Add comment to placeholder scope
@@ -321,20 +424,7 @@ class SvelteLanguageFrontend(
              commentNode.location = attributeLocation
              parent.addStatement(commentNode)
         }
-        
-        // Process the value of the attribute (which can be complex)
-        scopeManager.enterScope(parent) // Attribute values likely in parent scope
-        for(valueNode in ast.value) {
-             when(valueNode) {
-                 is Text -> handleText(valueNode, parent) // Simple string value
-                 is ExpressionTag -> handleExpressionTag(valueNode, parent) // Dynamic value
-                 // Handle other potential value types if necessary
-                 else -> {
-                      log.warn("Unsupported Svelte AST node type in attribute '{}' value: {}", ast.name, valueNode.type)
-                 }
-             }
-        }
-        scopeManager.leaveScope(parent)
+        */
     }
 
     /**
