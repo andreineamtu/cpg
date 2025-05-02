@@ -1,5 +1,19 @@
 rootProject.name = "cpg"
 
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        // Add other repositories if needed
+    }
+    // Define plugin versions centrally
+    plugins {
+        // Ensure other existing plugin versions are kept if this block already exists
+        // Add the node-gradle plugin definition
+        id("com.github.node-gradle.node") version "7.0.2" // Use the desired version
+    }
+}
+
 plugins {
     id("org.jetbrains.kotlinx.kover.aggregation") version "0.9.0"
 }
