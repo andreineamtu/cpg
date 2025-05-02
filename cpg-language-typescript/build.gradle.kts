@@ -24,14 +24,14 @@
  *
  */
 
-import com.github.gradle.node.npm.task.NpmInstallTask
 import com.github.gradle.node.npm.task.NpmTask
+import com.github.gradle.node.npm.task.NpxTask
 import io.github.masch0212.deno.RunDenoTask
 
 plugins {
     id("cpg.frontend-conventions")
     alias(libs.plugins.deno)
-    id("com.github.node-gradle.node") version "7.0.1"
+    alias(libs.plugins.node)
 }
 
 mavenPublishing {
@@ -41,38 +41,7 @@ mavenPublishing {
     }
 }
 
-// --- Node.js Integration for Svelte Parser ---
-val svelteParserDir = file("src/main/svelte-parser")
-
-node {
-    version.set("18.17.1")
-    npmVersion.set("9.6.7")
-    download.set(true)
-    workDir.set(file("${layout.buildDirectory}/nodejs-svelte"))
-    npmWorkDir.set(file("${layout.buildDirectory}/npm-svelte"))
-}
-
-val npmInstallSvelteParser =
-    tasks.register<NpmInstallTask>("npmInstallSvelteParser") {
-        description = "Installs npm dependencies for the Svelte parser."
-        dependsOn(tasks.nodeSetup)
-        workingDir.set(svelteParserDir)
-        inputs.file(svelteParserDir.resolve("package.json"))
-        inputs.file(svelteParserDir.resolve("package-lock.json")).optional(true)
-        outputs.dir(svelteParserDir.resolve("node_modules"))
-    }
-
-val compileSvelteParser =
-    tasks.register<NpmTask>("compileSvelteParser") {
-        description = "Compiles the Svelte parser TypeScript to JavaScript using tsc."
-        dependsOn(npmInstallSvelteParser)
-        workingDir.set(svelteParserDir)
-        args.set(listOf("run", "build"))
-        inputs.file(svelteParserDir.resolve("tsconfig.json"))
-        inputs.dir(svelteParserDir.resolve("src"))
-        outputs.dir(svelteParserDir.resolve("dist"))
-    }
-
+// --- Deno Integration for TypeScript Parser (Original) ---
 val compileWindowsX8664 =
     tasks.register<RunDenoTask>("compileWindowsX8664") {
         dependsOn(tasks.installDeno)
@@ -158,6 +127,47 @@ val compileLinuxAarch64 =
         outputs.cacheIf { true }
     }
 
+// --- Node.js Integration for Svelte Parser ---
+
+// Configure Node.js version
+node {
+    version.set("18.17.0") // Example version, align if needed
+    download.set(true)
+}
+
+// Task to install npm dependencies for the Svelte parser
+val svelteNpmInstall =
+    tasks.register<NpmTask>("svelteNpmInstall") {
+        description = "Installs npm dependencies for the Svelte parser"
+        workingDir.set(file("src/main/svelte-parser"))
+        args.set(listOf("install"))
+        // Ensure node tasks are configured correctly
+        inputs.files(
+            "src/main/svelte-parser/package.json",
+            "src/main/svelte-parser/package-lock.json",
+        )
+        outputs.dir("src/main/svelte-parser/node_modules")
+    }
+
+// Task to compile the Svelte parser using TypeScript compiler (tsc) via npx
+val svelteTsc =
+    tasks.register<NpxTask>("svelteTsc") {
+        description = "Compiles the Svelte parser using tsc"
+        dependsOn(svelteNpmInstall)
+        workingDir.set(file("src/main/svelte-parser"))
+        // Execute tsc using npx
+        command.set("tsc")
+        args.set(
+            listOf("--build", "tsconfig.json")
+        ) // Use --build flag for tsconfig project compilation
+        // Define inputs and outputs for caching and dependency tracking
+        inputs.dir("src/main/svelte-parser/src")
+        inputs.file("src/main/svelte-parser/tsconfig.json")
+        outputs.dir("src/main/svelte-parser/dist")
+        outputs.cacheIf { true }
+    }
+
+// Restore original processResources and add Svelte parser artifact
 tasks.processResources {
     dependsOn(
         compileWindowsX8664,
@@ -165,20 +175,21 @@ tasks.processResources {
         compileMacOSAarch64,
         compileLinuxX8664,
         compileLinuxAarch64,
-        compileSvelteParser,
+        // Add dependency on the Svelte parser compilation task
+        svelteTsc,
     )
-
-    from(compileSvelteParser.map { it.outputs.files }) {
-        into("svelte")
-        include("parser.js")
+    // Add the compiled Svelte parser to the resources
+    from(svelteTsc.get().outputs.files) {
+        into("svelte") // Place it inside a 'svelte' directory within resources
+        rename { filename ->
+            if (filename == "parser.js") { // Assuming the output is parser.js
+                "parser.js"
+            } else {
+                filename // Keep other files (like .map) if generated
+            }
+        }
     }
 }
 
+// Restore original Kotlin compilation dependency
 tasks.compileKotlin { dependsOn(tasks.processResources) }
-
-tasks.clean {
-    delete(node.workDir)
-    delete(node.npmWorkDir)
-    delete(svelteParserDir.resolve("node_modules"))
-    delete(svelteParserDir.resolve("dist"))
-}
